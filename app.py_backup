@@ -1,0 +1,204 @@
+import streamlit as st
+import pandas as pd
+from data_processing import clean_and_parse_dates, safe_convert_numeric
+from visualization import suggest_visualizations, create_visualization, analyze_data_structure
+from llm_analysis import analyze_with_llm
+from config import GOOGLE_API_KEY
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Initialize Gemini model
+llm = ChatGoogleGenerativeAI(model="gemini-pro", 
+                            google_api_key=GOOGLE_API_KEY,
+                            temperature=0.3)
+
+def main():
+    st.set_page_config(layout="wide")  # Set page layout to wide
+
+    st.title("Data Insights Explorer")
+    
+    # File upload
+    uploaded_file = st.file_uploader("Upload your data file", type=['csv', 'xlsx', 'xls'])
+    
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            # Clean and prepare data
+            with st.spinner("Preparing data..."):
+                df = clean_and_parse_dates(df)
+                df = safe_convert_numeric(df)
+            
+            # Display data sample
+            st.subheader("Data Preview")
+            st.dataframe(df.head())
+            
+            # Display basic data info
+            st.subheader("Dataset Information")
+            structure = analyze_data_structure(df)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"Total Records: {structure['total_rows']:,}")
+                st.write(f"Total Features: {structure['total_columns']}")
+            with col2:
+                st.write(f"Numeric Columns: {len(structure['numeric_columns'])}")
+                st.write(f"Categorical Columns: {len(structure['categorical_columns'])}")
+            
+            # Question input
+            st.subheader("Ask Questions")
+            if "user_question" not in st.session_state:
+                st.session_state.user_question = ""
+            
+            st.session_state.user_question = st.text_input("Enter your question:", value=st.session_state.user_question)
+            question = st.session_state.user_question
+            
+            if "stored_insights" not in st.session_state:
+                st.session_state["stored_insights"] = ""
+
+            # Analyze data when question changes
+            if question and question != st.session_state.get("last_question", ""):
+                with st.spinner("Analyzing data..."):
+                    insights = analyze_with_llm(df, question, llm)
+                    st.session_state["stored_insights"] = insights
+                    st.session_state["last_question"] = question  # Store last question
+            else:
+                insights = st.session_state["stored_insights"]
+                    
+            # Get visualization suggestions
+            viz_suggestions = suggest_visualizations(df, question)
+        
+            # Create two columns side by side
+            insights_col, viz_col = st.columns([0.4, 0.6]) 
+
+            # Insights Column
+            with insights_col:
+                st.subheader("Analysis Results")
+                st.write(insights)
+            
+            # Visualizations Column
+            with viz_col:
+                st.subheader("Visualizations")
+                if 'selected_columns' not in st.session_state:
+                    st.session_state['selected_columns'] = {}
+
+                if not viz_suggestions:
+                    st.write('Unfortunately we are unable to build visualizations for your query! Please search with different keywords.')
+                else:
+                    for suggestion in viz_suggestions:
+                        col_x_key = f"{suggestion['type']}_x"
+                        col_y_key = f"{suggestion['type']}_y"
+                        
+                        # Ensure default values if keys are missing
+                        st.session_state.selected_columns.setdefault(col_x_key, None)
+                        st.session_state.selected_columns.setdefault(col_y_key, None)
+                        with st.expander(f"Create {suggestion['type'].replace('_', ' ').title()} Chart"):
+                            cols = {}
+                            if suggestion['type'] == 'time_series':
+                                if suggestion.get('x_axis'):
+                                    st.session_state.selected_columns[col_x_key] = st.selectbox(
+                                        "Select time column",
+                                        suggestion['x_axis'],
+                                        key=col_x_key
+                                    )
+                                if suggestion.get('columns'):
+                                    st.session_state.selected_columns[col_y_key] = st.selectbox(
+                                        "Select value column",
+                                        suggestion['columns'],
+                                        key=col_y_key
+                                    )
+
+                            elif suggestion['type'] in ['bar_chart', 'scatter_plot']:
+                                if suggestion.get('possible_x') and suggestion.get('possible_y'):
+                                    st.session_state.selected_columns[col_x_key] = st.selectbox(
+                                        "Select X-axis",
+                                        suggestion['possible_x'],
+                                        key=col_x_key
+                                    )
+                                    st.session_state.selected_columns[col_y_key] = st.selectbox(
+                                        "Select Y-axis",
+                                        suggestion['possible_y'],
+                                        key=col_y_key
+                                    )
+                                
+                            elif suggestion['type'] in ['histogram']:
+                                col_key = f"{suggestion['type']}_col_{suggestion['columns'][0]}"
+                                if col_key not in st.session_state:
+                                    st.session_state[col_key] = suggestion['columns'][0]
+
+                                selected_column = st.selectbox(
+                                    "Select column",
+                                    suggestion['columns'],
+                                    index=suggestion['columns'].index(st.session_state[col_key]) if col_key in st.session_state and st.session_state[col_key] in suggestion['columns'] else 0,
+                                    key=col_key
+                                )
+
+                                cols['x'] = selected_column
+
+                            elif suggestion['type'] == 'box_plot':
+                                col_key = f"{suggestion['type']}_col_{suggestion['columns'][0]}"
+                                if col_key not in st.session_state:
+                                    st.session_state[col_key] = suggestion['columns'][0]
+
+                                selected_column = st.selectbox(
+                                    "Select column",
+                                    suggestion['columns'],
+                                    index=suggestion['columns'].index(st.session_state[col_key]) if col_key in st.session_state and st.session_state[col_key] in suggestion['columns'] else 0,
+                                    key=f"{col_key}_{suggestion['type']}"
+                                )
+
+                                cols['y'] = selected_column
+
+                                group_col_key = f"{suggestion['type']}_group_col_{suggestion['columns'][0]}"
+                                group_col = st.selectbox(
+                                    "Group by (optional)",
+                                    ['None'] + structure['categorical_columns'],
+                                    key=f"{group_col_key}_{suggestion['type']}"
+                                )
+                                if group_col != 'None':
+                                    cols['group'] = group_col
+                                else:
+                                    cols['group'] = None
+                            
+                            elif suggestion['type'] == 'pie_chart':
+                                col_key = f"{suggestion['type']}_col_{suggestion['columns'][0]}"
+                                if col_key not in st.session_state:
+                                    st.session_state[col_key] = suggestion['columns'][0]
+
+                                selected_column = st.selectbox(
+                                    "Select categorical column",
+                                    suggestion['columns'],
+                                    index=suggestion['columns'].index(st.session_state[col_key]) if col_key in st.session_state and st.session_state[col_key] in suggestion['columns'] else 0,
+                                    key=col_key
+                                )
+
+                                cols['x'] = selected_column
+
+                            if st.session_state.selected_columns[col_x_key] and st.session_state.selected_columns[col_y_key]:
+                                fig, error = create_visualization(df, suggestion['type'], {
+                                    'x': st.session_state.selected_columns[col_x_key],
+                                    'y': st.session_state.selected_columns[col_y_key]
+                                })
+                                if fig:
+                                    st.plotly_chart(fig, use_container_width=True)
+                                elif error:
+                                    st.error(f"Error creating visualization: {error}")
+                            elif suggestion['type'] in ['box_plot', 'histogram', 'pie_chart'] and cols:
+                                fig, error = create_visualization(df, suggestion['type'], cols)
+                                if fig:
+                                    st.plotly_chart(fig, use_container_width=True)
+                                elif error:
+                                    st.error(f"Error creating visualization: {error}")
+                    
+        except Exception as e:
+            st.error(f"Error reading file: {str(e)}")
+            
+if __name__ == "__main__":
+    main()
+    
+
+#What is the relationship between age and income category
+#Show me the age distribution by gender
+#Compare 
+#What is the proportion of position to company

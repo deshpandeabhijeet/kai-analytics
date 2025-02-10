@@ -1,0 +1,15 @@
+streamlit
+pandas
+plotly
+langchain-google-genai
+langchain-core
+google-generativeai
+python-dotenv
+numpy
+openpyxl
+joblib
+scikit-learn
+transformers 
+datasets 
+torch
+accelerate>=0.26.0
