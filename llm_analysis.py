@@ -4,6 +4,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from visualization import analyze_data_structure
 import pandas as pd
+import streamlit as st
 
 def analyze_with_llm(df: pd.DataFrame, question: str, llm: ChatGoogleGenerativeAI) -> str:
     """
@@ -15,62 +16,72 @@ def analyze_with_llm(df: pd.DataFrame, question: str, llm: ChatGoogleGenerativeA
     available_columns = ', '.join(df.columns)
     
     context = f"""
-    Analyze this dataset based on the question: {question}
-    
-    Dataset Information:
+    Analyze the following dataset based on the question: {question}
+
+    ### Dataset Information:
     - Total rows: {structure['total_rows']}
     - Total columns: {structure['total_columns']}
     - Numeric columns: {', '.join(structure['numeric_columns'])}
     - Categorical columns: {', '.join(structure['categorical_columns'])}
-    
-    First 5 records:
-    {df.head().to_string()}
-    
-    Sample 5 records:
-    {sample_data.to_string()}
-    
-    Basic statistics:
-    {df[structure['numeric_columns']].describe().to_string() if structure['numeric_columns'] else 'No numeric columns'}
-    
-    Please provide insights that are:
-    1. Specific to the question asked
-    2. Based on actual data patterns
-    3. Include relevant numbers and statistics
-    4. Suggest potential business implications if applicable.
-                    
-    Suggest 1 or 2 appropriate visualizations. 
-    For each visualization, specify the chart type (e.g., bar chart, scatter plot, line graph) and which columns should be used for the x and y axes (and any other relevant parameters). Explain your reasoning for each suggestion.
-    
-    Available columns: {available_columns}
-    When suggesting visualizations, use only the available columns listed above.  Do not suggest visualizations that use columns not present in the data.
 
+    ### Data Preview:
+    - First 5 records:
+    {df.head().to_string()}
+
+    - Sample 5 records:
+    {sample_data.to_string()}
+
+    ### Basic Statistics:
+    {df[structure['numeric_columns']].describe().to_string() if structure['numeric_columns'] else 'No numeric columns'}
+
+    ### Instructions for Analysis:
+    1. **Specificity**: Ensure insights directly address the question asked.
+    2. **Data Patterns**: Base insights on actual trends, correlations, or anomalies in the data.
+    3. **Numbers and Statistics**: Include relevant metrics, percentages, or statistical findings to support your insights.
+    4. **Business Implications**: Suggest potential implications or actionable recommendations for the business, if applicable.
+
+    ### Visualization Guidelines:
+    - Suggest 1 or 2 visualizations that best represent the data and answer the question.
+    - For each visualization:
+    - Specify the chart type (e.g., bar chart, scatter plot, line graph).
+    - Indicate which columns should be used for the x and y axes (and any other relevant parameters).
+    - Explain why the chosen visualization is appropriate for the data and question.
+    - Use only the available columns: {available_columns}. Do not suggest visualizations that require columns not present in the dataset.
+
+    ### Output Format:
     Return your analysis and visualization suggestions in the following strict JSON format:
 
     {{
-      "insights": "Your insightful analysis here...",
-       "visualizations": [
+    "insights": [
         {{
-          "type": "chart_type",  # Generic chart type
-          "x": "column_name",
-          "y": "column_name",
-          // ... other parameters as needed
+        "specificity": "Insight directly addressing the question...",
+        "data_patterns": "Description of trends, correlations, or anomalies...",
+        "numbers_and_statistics": "Relevant metrics or statistics...",
+        "business_implications": "Potential implications or recommendations..."
         }},
-        // ... more visualizations if appropriate
-      ]
+        // Add additional insights if applicable
+    ],
+    "visualizations": [
+        {{
+        "type": "chart_type",  # Generic chart type
+        "x": "column_name",
+        "y": "column_name",
+        "reasoning": "Explanation of why this visualization is appropriate..."
+        }},
+        // Add additional visualizations if applicable
+    ]
     }}
-    
-    When suggesting visualizations, consider these guidelines:
-    - For distributions of a single categorical variable, pie charts or histograms are often preferred.
-    - Bar charts are generally suitable for comparing values across different categories.
-    - If there's a time component, suggest a time series chart.
-    - Scatter plots are useful for exploring relationships between two numerical variables.
-    - Choose the chart type that best represents the data and answers the question.
-    
-    Do not include any markdown or extra formatting. The only output should be valid JSON.  Ensure the entire response is parseable as a single JSON object.
+
+    ### Additional Notes:
+    - Ensure the response is parseable as a single JSON object.
+    - Do not include any markdown or extra formatting outside the JSON structure.
+    - If no numeric columns are available, focus on categorical analysis and suggest appropriate visualizations (e.g., bar charts, pie charts).
+    - If the dataset is small or lacks clear patterns, state this explicitly in the insights and suggest exploratory visualizations.
+
     """
     
     response = llm.invoke([HumanMessage(content=context)])
-    #print(f'llm response: {response}')
+    #print(f'llm raw response: {response}')
     try:
         print(f"inside response parsing")
         cleaned_response = response.content.replace("`", "")
@@ -98,3 +109,18 @@ def analyze_with_llm(df: pd.DataFrame, question: str, llm: ChatGoogleGenerativeA
           "insights": response.content,  # Return the raw response as insights
           "visualizations": []  # Empty list of visualizations
       }
+      
+
+def get_insights_and_visualization_suggestions(df, question, llm):
+    """Gets insights and visualizations, now handles JSON parsing."""
+    if question and question != st.session_state.get("last_question", ""):
+        with st.spinner("Analyzing..."):
+            response = analyze_with_llm(df, question, llm)
+            st.session_state["last_question"] = question
+            st.session_state["last_response"] = response # Store the full, parsed JSON response
+    else:
+        response = st.session_state.get("last_response", {}) # Access potentially cached response
+
+    insights = response.get("insights", "") # Access elements safely
+    viz_suggestions = response.get("visualizations", [])
+    return insights, viz_suggestions
