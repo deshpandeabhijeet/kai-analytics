@@ -4,6 +4,7 @@ plotly
 langchain-google-genai
 langchain-core
 google-generativeai
+langchain-openai
 python-dotenv
 numpy
 openpyxl

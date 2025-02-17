@@ -69,17 +69,18 @@ def prepare_data(df):
         df = clean_and_parse_dates(df)
         df = safe_convert_numeric(df)
     return df
+    
+import pandas as pd
 
 def load_data(uploaded_file):
     """
     Load data from the uploaded file.
     """
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-        return df
-    except Exception as e:
-        st.error(f"Error reading file: {str(e)}")
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    elif uploaded_file.name.endswith('.xlsx') or uploaded_file.name.endswith('.xls'):
+        df = pd.read_excel(uploaded_file)
+    else:
+        st.error("Unsupported file format. Please upload a CSV or Excel file.")
         return None
+    return df
